@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse, FileResponse
 import uvicorn
 import time
 import os
+import random
 from blockchain import Blockchain
 
 # Initialize Blockchain
