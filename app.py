@@ -551,41 +551,37 @@ with gr.Blocks(
         </p>
     </div>
     """)
-    
-    # ── Hidden API Endpoints (for smart_node.py) ──
-    # These are invisible in the UI but callable via Gradio API
-    with gr.Group(visible=False):
-        # Node registration
-        api_register_ip = gr.Textbox()
-        api_register_port = gr.Number()
-        api_register_out = gr.JSON()
-        api_register_btn = gr.Button("register")
-        
-        def api_register(ip, port):
-            nodes = register_node(ip, int(port))
-            return {"status": "registered", "nodes": nodes}
-        
-        api_register_btn.click(
-            fn=api_register,
-            inputs=[api_register_ip, api_register_port],
-            outputs=api_register_out,
-            api_name="register"
-        )
-        
-        # Get nodes
-        api_nodes_out = gr.JSON()
-        api_nodes_btn = gr.Button("get_nodes")
-        
-        api_nodes_btn.click(
-            fn=get_live_nodes,
-            inputs=[],
-            outputs=api_nodes_out,
-            api_name="get_nodes"
-        )
 
 
 # ─────────────────────────────────────────────
 # LAUNCH
 # ─────────────────────────────────────────────
+# Mount custom API routes for smart_node.py
+# We do this AFTER Gradio Blocks is created to avoid
+# schema generation issues
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+@demo.load()
+def mount_custom_api():
+    """Mount REST API routes on startup"""
+    app = demo.fastapi_app
+    
+    @app.post("/api/register")
+    async def api_register(request: Request):
+        data = await request.json()
+        ip = data.get("ip", "")
+        port = data.get("port", 25565)
+        nodes = register_node(ip, int(port))
+        return JSONResponse({"status": "registered", "nodes": nodes})
+    
+    @app.get("/api/get_nodes")
+    async def api_get_nodes():
+        return JSONResponse(get_live_nodes())
+    
+    print("[✓] API routes mounted")
+
+
 if __name__ == "__main__":
     demo.queue().launch(server_name="0.0.0.0", server_port=7860)
