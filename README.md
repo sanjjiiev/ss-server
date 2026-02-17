@@ -3,7 +3,7 @@ title: BlockDrive
 emoji: ⛓️
 colorFrom: indigo
 colorTo: purple
-sdk: gradio
+sdk: docker
 sdk_version: "4.44.1"
 app_file: app.py
 pinned: false
