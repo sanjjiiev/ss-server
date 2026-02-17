@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, UploadFile, File, Form
+from fastapi.responses import JSONResponse, FileResponse
 import uvicorn
 import time
 import os
@@ -29,6 +29,73 @@ def get_live_nodes():
     for n in dead:
         del active_nodes[n]
     return list(active_nodes.keys())
+
+# ---------------------------------------------------------
+# RELAY & POLLING SYSTEM (Firewall Bypass)
+# ---------------------------------------------------------
+
+RELAY_DIR = "relay_storage"
+os.makedirs(RELAY_DIR, exist_ok=True)
+
+# {node_id: [task_1, task_2]}
+node_tasks = {}
+
+@app.post("/api/relay_upload")
+async def relay_upload(file: UploadFile = File(...), chunk_name: str = Form(...)):
+    """Frontend uploads chunk here. We queue it for a Node."""
+    try:
+        # 1. Save to temp relay storage
+        file_path = os.path.join(RELAY_DIR, chunk_name)
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # 2. Assign to a generic node (Round Robin)
+        nodes = get_live_nodes()
+        if not nodes:
+            return {"status": "error", "message": "No active nodes"}
+        
+        target_node = random.choice(nodes)
+        if target_node not in node_tasks:
+            node_tasks[target_node] = []
+            
+        # 3. Add task for node
+        node_tasks[target_node].append({
+            "type": "store",
+            "chunk_name": chunk_name
+        })
+        
+        return {"status": "queued", "target_node": target_node}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/poll_tasks")
+def poll_tasks(node_id: str):
+    """Node polls this to see if it has work."""
+    if node_id in node_tasks and node_tasks[node_id]:
+        # Return tasks and clear them (pop)
+        tasks = node_tasks[node_id]
+        node_tasks[node_id] = [] # Clear queue once fetched
+        return {"tasks": tasks}
+    return {"tasks": []}
+
+@app.get("/api/download_relay/{chunk_name}")
+def download_relay(chunk_name: str):
+    """Node downloads the chunk from our relay storage."""
+    file_path = os.path.join(RELAY_DIR, chunk_name)
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
+    return {"error": "File not found"}
+
+@app.post("/api/confirm_task")
+def confirm_task(node_id: str, chunk_name: str, status: str):
+    """Node confirms it saved the file. We delete relay copy."""
+    if status == "success":
+        file_path = os.path.join(RELAY_DIR, chunk_name)
+        if os.path.exists(file_path):
+            os.remove(file_path) # Cleanup
+        return {"status": "acknowledged"}
+    return {"status": "ok"}
 
 # ─────────────────────────────────────────────
 # API ROUTES

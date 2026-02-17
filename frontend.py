@@ -66,21 +66,21 @@ def get_nodes():
         return []
     return []
 
-def tcp_upload_chunk(ip, port, chunk_data, chunk_name):
+def http_relay_upload(chunk_data, chunk_name):
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(10)
-        s.connect((ip, int(port)))
-        s.send(chunk_name.encode())
-        ack = s.recv(1024)
-        if ack != b"ACK":
-            s.close()
-            return False, "No ACK received"
-        s.sendall(chunk_data)
-        s.close()
-        return True, ""
+        files = {"file": (chunk_name, chunk_data)}
+        data = {"chunk_name": chunk_name}
+        resp = requests.post(f"{API_URL}/relay_upload", files=files, data=data, timeout=30)
+        
+        if resp.status_code == 200:
+            res = resp.json()
+            if res.get("status") == "queued":
+                return True, res.get("target_node"), ""
+            else:
+                return False, None, res.get("message")
+        return False, None, f"HTTP {resp.status_code}"
     except Exception as e:
-        return False, str(e)
+        return False, None, str(e)
 
 def tcp_download_chunk(ip, port, chunk_name):
     try:
@@ -151,68 +151,58 @@ with tab1:
                 status.info("✂️ Sharding...")
                 chunks = [encrypted[i:i + CHUNK_SIZE] for i in range(0, len(encrypted), CHUNK_SIZE)]
                 
-                # 3. Get Nodes
-                nodes = get_nodes()
-                if not nodes:
-                    st.error("❌ No active storage nodes found. Start smart_node.py!")
-                else:
-                    # 4. Distribute
-                    status.info(f"📡 Distributing {len(chunks)} chunks to {len(nodes)} nodes...")
-                    location_map = {}
-                    failed = []
+                # 3. Relay Upload
+                status.info(f"📡 Uploading {len(chunks)} chunks to Relay...")
+                location_map = {}
+                failed = []
+                progress_bar = st.progress(0)
+                
+                for i, chunk_data in enumerate(chunks):
+                    chunk_name = f"{original_name}.part_{i}"
+                    success, target_node, error_msg = http_relay_upload(chunk_data, chunk_name)
                     
-                    progress_bar = st.progress(0)
-                    
-                    for i, chunk_data in enumerate(chunks):
-                        node_str = nodes[i % len(nodes)]
-                        ip, port = node_str.split(":")
-                        chunk_name = f"{original_name}.part_{i}"
-                        
-                        success, error_msg = tcp_upload_chunk(ip, port, chunk_data, chunk_name)
-                        
-                        if success:
-                            location_map[chunk_name] = node_str
-                        else:
-                            failed.append(f"Chunk {i}: {error_msg}")
-                        
-                        progress_bar.progress((i + 1) / len(chunks))
-                    
-                    if not location_map:
-                         st.error(f"❌ All uploads failed. Last error: {error_msg if 'error_msg' in locals() else 'Unknown'}")
-                         if failed:
-                             with st.expander("See error details"):
-                                 for f in failed:
-                                     st.write(f)
+                    if success:
+                        location_map[chunk_name] = target_node
                     else:
-                        # 5. Blockchain
-                        status.info("⛓️ Recording on blockchain...")
-                        merkle_root = build_merkle_tree(chunks)
-                        
-                        payload = {
-                            "owner": owner_name,
-                            "file_hash": merkle_root,
-                            "file_name": original_name,
-                            "locations": location_map
-                        }
-                        
-                        try:
-                            r = requests.post(f"{API_URL}/add_transaction", json=payload)
-                            if r.status_code == 201:
-                                status.success("✅ File Uploaded & Transaction Recorded!")
-                                st.markdown(f"""
-                                <div class="success-box">
-                                    <h4>Download Credentials (SAVE THIS!)</h4>
-                                    <p><b>File ID (Merkle Root):</b> <code>{merkle_root}</code></p>
-                                    <p><b>Decryption Key:</b> <code>{key.decode()}</code></p>
-                                </div>
-                                """, unsafe_allow_html=True)
-                                
-                                if failed:
-                                    st.warning(f"⚠️ {len(failed)} chunks failed to upload.")
-                            else:
-                                st.error(f"❌ Blockchain error: {r.text}")
-                        except Exception as e:
-                            st.error(f"❌ API connection failed: {e}")
+                        failed.append(f"Chunk {i}: {error_msg}")
+                    
+                    progress_bar.progress((i + 1) / len(chunks))
+
+                if not location_map:
+                     st.error(f"❌ Upload to Relay failed. Last error: {error_msg if 'error_msg' in locals() else 'Unknown'}")
+                     if failed:
+                         with st.expander("See error details"):
+                             for f in failed:
+                                 st.write(f)
+                else:
+                    status.info("⛓️ Recording on blockchain...")
+                    merkle_root = build_merkle_tree(chunks)
+                    
+                    payload = {
+                        "owner": owner_name,
+                        "file_hash": merkle_root,
+                        "file_name": original_name,
+                        "locations": location_map
+                    }
+                    
+                    try:
+                        r = requests.post(f"{API_URL}/add_transaction", json=payload)
+                        if r.status_code == 201:
+                            status.success("✅ File Uploaded & Transaction Recorded!")
+                            st.markdown(f"""
+                            <div class="success-box">
+                                <h4>Download Credentials (SAVE THIS!)</h4>
+                                <p><b>File ID (Merkle Root):</b> <code>{merkle_root}</code></p>
+                                <p><b>Decryption Key:</b> <code>{key.decode()}</code></p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            if failed:
+                                st.warning(f"⚠️ {len(failed)} chunks failed to upload.")
+                        else:
+                            st.error(f"❌ Blockchain error: {r.text}")
+                    except Exception as e:
+                        st.error(f"❌ API connection failed: {e}")
 
 # ── DOWNLOAD TAB ──
 with tab2:
