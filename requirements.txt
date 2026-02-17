@@ -1,3 +1,4 @@
 gradio
 cryptography
 huggingface_hub
+uvicorn

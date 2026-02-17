@@ -553,28 +553,89 @@ with gr.Blocks(
     </div>
     """)
     
-    # ── Mount API Routes (inside Blocks context) ──
-    demo.load(lambda: None)  # Trigger on page load
-    
-# Now mount the FastAPI routes after Blocks is created
-from fastapi import Request
-from fastapi.responses import JSONResponse
+# ─────────────────────────────────────────────
+# FASTAPI SETUP & LAUNCH
+# ─────────────────────────────────────────────
+# We create a standard FastAPI app to serve the API,
+# and mount the Gradio app onto it. This is the
+# robust way to combine them on HF Spaces.
 
-@demo.fastapi_app.post("/api/register")
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+import uvicorn
+
+# 1. Create FastAPI app
+# (This variable 'app' is what HF Spaces will look for if we don't use the Gradio SDK launcher,
+# but since we use uvicorn in main, it works either way)
+app = FastAPI()
+
+
+# 2. Define API Routes
+@app.post("/api/register")
 async def api_register(request: Request):
+    """Register a new storage node"""
     data = await request.json()
     ip = data.get("ip", "")
     port = data.get("port", 25565)
     nodes = register_node(ip, int(port))
     return JSONResponse({"status": "registered", "nodes": nodes})
 
-@demo.fastapi_app.get("/api/get_nodes")
+
+@app.get("/api/get_nodes")
 async def api_get_nodes():
+    """Get list of active nodes"""
     return JSONResponse(get_live_nodes())
 
 
-# ─────────────────────────────────────────────
-# LAUNCH
-# ─────────────────────────────────────────────
+@app.post("/api/add_transaction")
+async def api_add_transaction(request: Request):
+    """Add a file transaction"""
+    data = await request.json()
+    required = ['owner', 'file_hash', 'file_name', 'locations']
+    if not all(k in data for k in required):
+        return JSONResponse({"error": "Missing fields"}, status_code=400)
+    
+    index = blockchain.new_transaction(
+        data['owner'], data['file_hash'],
+        data['file_name'], data['locations']
+    )
+    blockchain.new_block(proof=100)
+    blockchain.save_to_repo()
+    return JSONResponse({"message": f"Transaction added to Block {index}"}, status_code=201)
+
+
+@app.get("/api/get_file/{file_hash}")
+async def api_get_file(file_hash: str):
+    """Get file metadata"""
+    result = blockchain.get_file_location(file_hash)
+    if result:
+        return JSONResponse(result)
+    return JSONResponse({"error": "File not found"}, status_code=404)
+
+
+@app.get("/api/chain")
+async def api_chain():
+    """Get full blockchain"""
+    return JSONResponse({"chain": blockchain.chain, "length": len(blockchain.chain)})
+
+
+@app.get("/api/health")
+async def api_health():
+    """Health check"""
+    return JSONResponse({
+        "status": "online",
+        "nodes": len(get_live_nodes()),
+        "blocks": len(blockchain.chain),
+        "files": len(blockchain.get_all_files())
+    })
+
+
+# 3. Mount Gradio App
+# This makes the UI available at the root URL "/"
+app = gr.mount_gradio_app(app, demo, path="/")
+
+
 if __name__ == "__main__":
-    demo.queue().launch(server_name="0.0.0.0", server_port=7860)
+    # Launch uvicorn server
+    print("[+] Starting BlockDrive Server on port 7860...")
+    uvicorn.run(app, host="0.0.0.0", port=7860)
