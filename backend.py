@@ -171,11 +171,14 @@ async def api_add_transaction(request: Request):
         data['owner'], data['file_hash'],
         data['file_name'], data['locations']
     )
-    # Mine block & Persist
-    blockchain.new_block(proof=100)
+    # Mine block with Proof of Work & Persist
+    block = blockchain.mine_block()
     blockchain.save_to_repo()
     
-    return JSONResponse({"message": f"Transaction added to Block {index}"}, status_code=201)
+    return JSONResponse({
+        "message": f"Transaction added to Block {block['index']}",
+        "proof": block['proof']
+    }, status_code=201)
 
 @app.get("/api/get_file/{file_hash}")
 async def api_get_file(file_hash: str):
@@ -190,6 +193,16 @@ async def api_chain():
         "chain": blockchain.chain,
         "length": len(blockchain.chain),
         "files": len(blockchain.get_all_files())
+    })
+
+@app.get("/api/validate")
+async def api_validate():
+    """Validate the entire blockchain for tampering"""
+    valid, bad_index = blockchain.validate_chain()
+    return JSONResponse({
+        "valid": valid,
+        "blocks": len(blockchain.chain),
+        "tampered_at": bad_index if not valid else None
     })
 
 if __name__ == "__main__":

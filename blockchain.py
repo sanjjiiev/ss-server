@@ -6,6 +6,10 @@ import os
 # Path for persistent blockchain data
 BLOCKCHAIN_FILE = "blockchain_data.json"
 
+# Mining difficulty: number of leading zeros required in hash
+# 2 = fast (demo), 4 = slow (production)
+DIFFICULTY = 2
+
 
 class Blockchain:
     def __init__(self):
@@ -15,11 +19,23 @@ class Blockchain:
         # Try to load existing chain from file
         if os.path.exists(BLOCKCHAIN_FILE):
             self._load_from_file()
-            print(f"[+] Blockchain loaded from {BLOCKCHAIN_FILE} ({len(self.chain)} blocks)")
+            # Validate loaded chain
+            valid, bad_index = self.validate_chain()
+            if valid:
+                print(f"[+] Blockchain loaded & verified ({len(self.chain)} blocks) ✅")
+            else:
+                print(f"[!] TAMPERED CHAIN DETECTED at block {bad_index}! Rejecting.")
+                print(f"[!] Resetting to genesis block.")
+                self.chain = []
+                self.current_transactions = []
+                self._create_genesis()
         else:
-            # Create the "Genesis Block" (The first block)
-            self.new_block(previous_hash='1', proof=100)
-            print("[+] Genesis block created")
+            self._create_genesis()
+
+    def _create_genesis(self):
+        """Create the genesis (first) block with PoW"""
+        self.new_block(previous_hash='1', proof=self.proof_of_work(0))
+        print("[+] Genesis block created (mined)")
 
     def _load_from_file(self):
         """Load blockchain from JSON file"""
@@ -32,7 +48,7 @@ class Blockchain:
             print(f"[-] Failed to load blockchain: {e}. Creating fresh chain.")
             self.chain = []
             self.current_transactions = []
-            self.new_block(previous_hash='1', proof=100)
+            self._create_genesis()
 
     def _save_to_file(self):
         """Save blockchain to local JSON file"""
@@ -69,6 +85,53 @@ class Blockchain:
         except Exception as e:
             print(f"[-] HF commit failed (local save still OK): {e}")
 
+    # ─────────────────────────────────────────────
+    # PROOF OF WORK (Mining)
+    # ─────────────────────────────────────────────
+    def proof_of_work(self, last_proof):
+        """
+        Find a number 'proof' such that hash(last_proof, proof)
+        has DIFFICULTY leading zeros. This is the mining process.
+        """
+        proof = 0
+        while not self.valid_proof(last_proof, proof):
+            proof += 1
+        return proof
+
+    @staticmethod
+    def valid_proof(last_proof, proof):
+        """Check if hash(last_proof, proof) has required leading zeros"""
+        guess = f'{last_proof}{proof}'.encode()
+        guess_hash = hashlib.sha256(guess).hexdigest()
+        return guess_hash[:DIFFICULTY] == "0" * DIFFICULTY
+
+    # ─────────────────────────────────────────────
+    # CHAIN VALIDATION (Tamper Detection)
+    # ─────────────────────────────────────────────
+    def validate_chain(self):
+        """
+        Verify the entire chain is valid:
+        1. Each block's previous_hash matches the hash of the prior block
+        2. Each block's proof of work is valid
+        Returns (True, -1) if valid, (False, bad_block_index) if tampered
+        """
+        for i in range(1, len(self.chain)):
+            block = self.chain[i]
+            prev_block = self.chain[i - 1]
+
+            # Check 1: Hash chain integrity
+            if block['previous_hash'] != self.hash(prev_block):
+                return False, i
+
+            # Check 2: Proof of Work validity
+            if not self.valid_proof(prev_block['proof'], block['proof']):
+                return False, i
+
+        return True, -1
+
+    # ─────────────────────────────────────────────
+    # BLOCK & TRANSACTION OPERATIONS
+    # ─────────────────────────────────────────────
     def new_block(self, proof, previous_hash=None):
         """Creates a new Block and adds it to the chain"""
         block = {
@@ -82,6 +145,16 @@ class Blockchain:
         # Reset the current list of transactions
         self.current_transactions = []
         self.chain.append(block)
+        return block
+
+    def mine_block(self):
+        """Mine a new block using Proof of Work"""
+        last_block = self.last_block
+        last_proof = last_block['proof']
+        proof = self.proof_of_work(last_proof)
+        previous_hash = self.hash(last_block)
+        block = self.new_block(proof, previous_hash)
+        print(f"[+] Block #{block['index']} mined (proof={proof})")
         return block
 
     def new_transaction(self, owner, file_hash, file_name, chunks_metadata):
