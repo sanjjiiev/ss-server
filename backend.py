@@ -18,7 +18,8 @@ app = FastAPI()
 # ─────────────────────────────────────────────
 def register_node(ip: str, port: int):
     """Register storage node"""
-    node = f"{ip}:{port}"
+    # Relay mode: port 0 means no direct connection, use ID only
+    node = ip if port == 0 else f"{ip}:{port}"
     active_nodes[node] = time.time()
     print(f"[+] Node Registered: {node}")
     return list(active_nodes.keys())
@@ -26,7 +27,7 @@ def register_node(ip: str, port: int):
 def get_live_nodes():
     """Get active nodes (prune > 5 mins old)"""
     current = time.time()
-    dead = [n for n, ts in active_nodes.items() if current - ts > 300]
+    dead = [n for n, ts in active_nodes.items() if current - ts > 30]
     for n in dead:
         del active_nodes[n]
     return list(active_nodes.keys())
