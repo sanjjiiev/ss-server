@@ -75,24 +75,33 @@ def http_relay_upload(chunk_data, chunk_name):
         if resp.status_code == 200:
             res = resp.json()
             if res.get("status") == "queued":
-                return True, res.get("target_node"), ""
+                # Returns list of target nodes (replication)
+                return True, res.get("target_nodes", []), ""
             else:
-                return False, None, res.get("message")
-        return False, None, f"HTTP {resp.status_code}"
+                return False, [], res.get("message")
+        return False, [], f"HTTP {resp.status_code}"
     except Exception as e:
-        return False, None, str(e)
+        return False, [], str(e)
 
-def http_relay_download(node_id, chunk_name):
+def http_relay_download(node_info, chunk_name):
+    """Request chunk from node(s). Supports single node or list of replicas."""
     try:
-        # 1. Request Retrieval
-        # Extracts actual ID if format is "ID:PORT" (which is common legacy format or if register sends port)
-        if ":" in node_id:
-            node_id = node_id.split(":")[0]
-            
-        payload = {"chunk_name": chunk_name, "node_id": node_id}
-        requests.post(f"{API_URL}/request_retrieval", json=payload, timeout=5)
+        # Handle both list (replicated) and string (legacy) formats
+        if isinstance(node_info, list):
+            node_list = node_info
+        else:
+            node_list = [node_info]
         
-        # 2. Poll for file (up to 30s)
+        # Request retrieval from ALL replica nodes (first responder wins)
+        for node_id in node_list:
+            clean_id = node_id.split(":")[0] if ":" in node_id else node_id
+            payload = {"chunk_name": chunk_name, "node_id": clean_id}
+            try:
+                requests.post(f"{API_URL}/request_retrieval", json=payload, timeout=5)
+            except:
+                pass
+        
+        # Poll for file (up to 30s)
         for _ in range(30):
             r = requests.get(f"{API_URL}/download_relay/{chunk_name}", timeout=5)
             if r.status_code == 200:
@@ -162,10 +171,10 @@ with tab1:
                 
                 for i, chunk_data in enumerate(chunks):
                     chunk_name = f"{original_name}.part_{i}"
-                    success, target_node, error_msg = http_relay_upload(chunk_data, chunk_name)
+                    success, target_nodes, error_msg = http_relay_upload(chunk_data, chunk_name)
                     
                     if success:
-                        location_map[chunk_name] = target_node
+                        location_map[chunk_name] = target_nodes  # Store list of replicas
                     else:
                         failed.append(f"Chunk {i}: {error_msg}")
                     

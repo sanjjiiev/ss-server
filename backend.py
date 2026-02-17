@@ -39,12 +39,16 @@ def get_live_nodes():
 RELAY_DIR = "relay_storage"
 os.makedirs(RELAY_DIR, exist_ok=True)
 
+REPLICATION_FACTOR = 2  # Store each chunk on 2 nodes
+
 # {node_id: [task_1, task_2]}
 node_tasks = {}
+# Track pending confirmations: {chunk_name: set(node_ids)}
+relay_pending = {}
 
 @app.post("/api/relay_upload")
 async def relay_upload(file: UploadFile = File(...), chunk_name: str = Form(...)):
-    """Frontend uploads chunk here. We queue it for a Node."""
+    """Frontend uploads chunk here. We queue it for multiple Nodes (replication)."""
     try:
         # 1. Save to temp relay storage
         file_path = os.path.join(RELAY_DIR, chunk_name)
@@ -52,22 +56,25 @@ async def relay_upload(file: UploadFile = File(...), chunk_name: str = Form(...)
             content = await file.read()
             f.write(content)
         
-        # 2. Assign to a generic node (Round Robin)
+        # 2. Assign to multiple nodes (replication)
         nodes = get_live_nodes()
         if not nodes:
             return {"status": "error", "message": "No active nodes"}
         
-        target_node = random.choice(nodes)
-        if target_node not in node_tasks:
-            node_tasks[target_node] = []
-            
-        # 3. Add task for node
-        node_tasks[target_node].append({
-            "type": "store",
-            "chunk_name": chunk_name
-        })
+        num_replicas = min(REPLICATION_FACTOR, len(nodes))
+        target_nodes = random.sample(nodes, num_replicas)
         
-        return {"status": "queued", "target_node": target_node}
+        # 3. Queue store task for each target node
+        relay_pending[chunk_name] = set(target_nodes)
+        for target in target_nodes:
+            if target not in node_tasks:
+                node_tasks[target] = []
+            node_tasks[target].append({
+                "type": "store",
+                "chunk_name": chunk_name
+            })
+        
+        return {"status": "queued", "target_nodes": target_nodes}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -91,11 +98,17 @@ def download_relay(chunk_name: str):
 
 @app.post("/api/confirm_task")
 def confirm_task(node_id: str, chunk_name: str, status: str):
-    """Node confirms it saved the file. We delete relay copy."""
+    """Node confirms it saved the file. Delete relay copy only when ALL replicas confirm."""
     if status == "success":
-        file_path = os.path.join(RELAY_DIR, chunk_name)
-        if os.path.exists(file_path):
-            os.remove(file_path) # Cleanup
+        if chunk_name in relay_pending:
+            relay_pending[chunk_name].discard(node_id)
+            if len(relay_pending[chunk_name]) == 0:
+                # All replicas confirmed — safe to delete
+                file_path = os.path.join(RELAY_DIR, chunk_name)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                del relay_pending[chunk_name]
+                print(f"[+] All replicas confirmed for {chunk_name}. Relay cleaned.")
         return {"status": "acknowledged"}
     return {"status": "ok"}
 
