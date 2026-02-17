@@ -75,13 +75,12 @@ def tcp_upload_chunk(ip, port, chunk_data, chunk_name):
         ack = s.recv(1024)
         if ack != b"ACK":
             s.close()
-            return False
+            return False, "No ACK received"
         s.sendall(chunk_data)
         s.close()
-        return True
+        return True, ""
     except Exception as e:
-        print(f"Upload failed: {e}")
-        return False
+        return False, str(e)
 
 def tcp_download_chunk(ip, port, chunk_name):
     try:
@@ -169,15 +168,21 @@ with tab1:
                         ip, port = node_str.split(":")
                         chunk_name = f"{original_name}.part_{i}"
                         
-                        if tcp_upload_chunk(ip, port, chunk_data, chunk_name):
+                        success, error_msg = tcp_upload_chunk(ip, port, chunk_data, chunk_name)
+                        
+                        if success:
                             location_map[chunk_name] = node_str
                         else:
-                            failed.append(i)
+                            failed.append(f"Chunk {i}: {error_msg}")
                         
                         progress_bar.progress((i + 1) / len(chunks))
                     
                     if not location_map:
-                         st.error("❌ All uploads failed.")
+                         st.error(f"❌ All uploads failed. Last error: {error_msg if 'error_msg' in locals() else 'Unknown'}")
+                         if failed:
+                             with st.expander("See error details"):
+                                 for f in failed:
+                                     st.write(f)
                     else:
                         # 5. Blockchain
                         status.info("⛓️ Recording on blockchain...")
