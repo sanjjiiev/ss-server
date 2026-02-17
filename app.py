@@ -543,6 +543,7 @@ with gr.Blocks(
 
             net_btn.click(fn=get_network_status, outputs=net_status)
 
+
     # ── Footer ──
     gr.HTML("""
     <div style="text-align:center; padding:20px; margin-top:20px; border-top: 1px solid rgba(255,255,255,0.06);">
@@ -551,37 +552,29 @@ with gr.Blocks(
         </p>
     </div>
     """)
+    
+    # ── Mount API Routes (inside Blocks context) ──
+    demo.load(lambda: None)  # Trigger on page load
+    
+# Now mount the FastAPI routes after Blocks is created
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+@demo.fastapi_app.post("/api/register")
+async def api_register(request: Request):
+    data = await request.json()
+    ip = data.get("ip", "")
+    port = data.get("port", 25565)
+    nodes = register_node(ip, int(port))
+    return JSONResponse({"status": "registered", "nodes": nodes})
+
+@demo.fastapi_app.get("/api/get_nodes")
+async def api_get_nodes():
+    return JSONResponse(get_live_nodes())
 
 
 # ─────────────────────────────────────────────
 # LAUNCH
 # ─────────────────────────────────────────────
-# Mount custom API routes for smart_node.py
-# We do this AFTER Gradio Blocks is created to avoid
-# schema generation issues
-
-from fastapi import Request
-from fastapi.responses import JSONResponse
-
-@demo.load()
-def mount_custom_api():
-    """Mount REST API routes on startup"""
-    app = demo.fastapi_app
-    
-    @app.post("/api/register")
-    async def api_register(request: Request):
-        data = await request.json()
-        ip = data.get("ip", "")
-        port = data.get("port", 25565)
-        nodes = register_node(ip, int(port))
-        return JSONResponse({"status": "registered", "nodes": nodes})
-    
-    @app.get("/api/get_nodes")
-    async def api_get_nodes():
-        return JSONResponse(get_live_nodes())
-    
-    print("[✓] API routes mounted")
-
-
 if __name__ == "__main__":
     demo.queue().launch(server_name="0.0.0.0", server_port=7860)
