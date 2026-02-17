@@ -82,22 +82,25 @@ def http_relay_upload(chunk_data, chunk_name):
     except Exception as e:
         return False, None, str(e)
 
-def tcp_download_chunk(ip, port, chunk_name):
+def http_relay_download(node_id, chunk_name):
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(10)
-        s.connect((ip, int(port)))
-        s.send(f"GET:{chunk_name}".encode())
-        data = b""
-        while True:
-            packet = s.recv(4096)
-            if not packet:
-                break
-            data += packet
-        s.close()
-        return data if data else None
+        # 1. Request Retrieval
+        # Extracts actual ID if format is "ID:PORT" (which is common legacy format or if register sends port)
+        if ":" in node_id:
+            node_id = node_id.split(":")[0]
+            
+        payload = {"chunk_name": chunk_name, "node_id": node_id}
+        requests.post(f"{API_URL}/request_retrieval", json=payload, timeout=5)
+        
+        # 2. Poll for file (up to 30s)
+        for _ in range(30):
+            r = requests.get(f"{API_URL}/download_relay/{chunk_name}", timeout=5)
+            if r.status_code == 200:
+                return r.content
+            time.sleep(1)
+            
+        return None
     except Exception as e:
-        print(f"Download failed: {e}")
         return None
 
 def build_merkle_tree(chunks):
@@ -241,14 +244,11 @@ with tab2:
                     
                     for i, chunk_name in enumerate(sorted_chunks):
                         node_str = locations[chunk_name]
-                        if ":" in node_str:
-                             ip, port = node_str.split(":")
-                        else:
-                             ip, port = node_str, "25565"
-                             
-                        data = tcp_download_chunk(ip, port, chunk_name)
+                        # Use Relay Download
+                        data = http_relay_download(node_str, chunk_name)
+                        
                         if not data:
-                             st.error(f"❌ Failed to fetch chunk {chunk_name}")
+                             st.error(f"❌ Failed to fetch chunk {chunk_name} from {node_str}")
                              full_enc = None
                              break
                         full_enc += data

@@ -98,6 +98,37 @@ def confirm_task(node_id: str, chunk_name: str, status: str):
         return {"status": "acknowledged"}
     return {"status": "ok"}
 
+@app.post("/api/request_retrieval")
+async def request_retrieval_endpoint(request: Request):
+    try:
+        data = await request.json()
+        chunk_name = data.get("chunk_name")
+        node_id = data.get("node_id")
+        
+        if not chunk_name or not node_id:
+             return JSONResponse({"status": "error", "message": "Missing params"}, status_code=400)
+
+        if node_id not in node_tasks:
+            node_tasks[node_id] = []
+        
+        # Add task (avoid duplicates if possible, but simpler to just append)
+        node_tasks[node_id].append({"type": "retrieve", "chunk_name": chunk_name})
+        return JSONResponse({"status": "queued"})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+@app.post("/api/relay_push")
+async def relay_push(file: UploadFile = File(...), chunk_name: str = Form(...)):
+    """Node pushes chunk here for Frontend to download."""
+    try:
+        file_path = os.path.join(RELAY_DIR, chunk_name)
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        return {"status": "received"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 # ─────────────────────────────────────────────
 # API ROUTES
 # ─────────────────────────────────────────────
