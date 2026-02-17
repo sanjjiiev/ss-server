@@ -551,86 +551,41 @@ with gr.Blocks(
         </p>
     </div>
     """)
-
-
-# ─────────────────────────────────────────────
-# REST API (for smart_node.py registration)
-# ─────────────────────────────────────────────
-# We add custom REST routes to Gradio's underlying
-# FastAPI server so smart_node.py can call
-# standard HTTP endpoints like /api/register.
-
-from fastapi import Request
-from fastapi.responses import JSONResponse
-
-
-def mount_api_routes(app):
-    """Mount REST API routes on the FastAPI app"""
-
-    @app.post("/api/register")
-    async def rest_register(request: Request):
-        data = await request.json()
-        ip = data.get("ip", "")
-        port = data.get("port", 25565)
-        nodes = register_node(ip, int(port))
-        return JSONResponse({"status": "registered", "nodes": nodes})
-
-    @app.get("/api/get_nodes")
-    async def rest_get_nodes():
-        return JSONResponse(get_live_nodes())
-
-    @app.post("/api/add_transaction")
-    async def rest_add_transaction(request: Request):
-        data = await request.json()
-        required = ['owner', 'file_hash', 'file_name', 'locations']
-        if not all(k in data for k in required):
-            return JSONResponse({"error": "Missing fields"}, status_code=400)
-        index = blockchain.new_transaction(
-            data['owner'], data['file_hash'],
-            data['file_name'], data['locations']
+    
+    # ── Hidden API Endpoints (for smart_node.py) ──
+    # These are invisible in the UI but callable via Gradio API
+    with gr.Group(visible=False):
+        # Node registration
+        api_register_ip = gr.Textbox()
+        api_register_port = gr.Number()
+        api_register_out = gr.JSON()
+        api_register_btn = gr.Button("register")
+        
+        def api_register(ip, port):
+            nodes = register_node(ip, int(port))
+            return {"status": "registered", "nodes": nodes}
+        
+        api_register_btn.click(
+            fn=api_register,
+            inputs=[api_register_ip, api_register_port],
+            outputs=api_register_out,
+            api_name="register"
         )
-        blockchain.new_block(proof=100)
-        blockchain.save_to_repo()
-        return JSONResponse({"message": f"Transaction added to Block {index}"}, status_code=201)
-
-    @app.get("/api/get_file/{file_hash}")
-    async def rest_get_file(file_hash: str):
-        result = blockchain.get_file_location(file_hash)
-        if result:
-            return JSONResponse(result)
-        return JSONResponse({"error": "File not found"}, status_code=404)
-
-    @app.get("/api/chain")
-    async def rest_chain():
-        return JSONResponse({"chain": blockchain.chain, "length": len(blockchain.chain)})
-
-    @app.get("/api/health")
-    async def rest_health():
-        return JSONResponse({
-            "status": "online",
-            "nodes": len(get_live_nodes()),
-            "blocks": len(blockchain.chain),
-            "files": len(blockchain.get_all_files())
-        })
-
-    print("[+] REST API routes mounted successfully")
+        
+        # Get nodes
+        api_nodes_out = gr.JSON()
+        api_nodes_btn = gr.Button("get_nodes")
+        
+        api_nodes_btn.click(
+            fn=get_live_nodes,
+            inputs=[],
+            outputs=api_nodes_out,
+            api_name="get_nodes"
+        )
 
 
 # ─────────────────────────────────────────────
 # LAUNCH
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
-    demo.queue()
-    gradio_app, _, _ = demo.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
-        prevent_thread_lock=True
-    )
-    mount_api_routes(gradio_app)
-    # Keep alive (cross-platform)
-    import threading
-    threading.Event().wait()
-else:
-    # When imported by HF Spaces / Gradio launcher
-    demo.queue()
-    mount_api_routes(demo.app)
+    demo.queue().launch(server_name="0.0.0.0", server_port=7860)
