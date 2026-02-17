@@ -3,4 +3,5 @@ fastapi
 uvicorn
 requests
 cryptography
+python-multipart
 huggingface_hub
