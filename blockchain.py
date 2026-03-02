@@ -1,10 +1,12 @@
 import hashlib
 import json
+import zlib
 import time
 import os
 
-# Path for persistent blockchain data
-BLOCKCHAIN_FILE = "blockchain_data.json"
+# Path for persistent blockchain data (binary format)
+BLOCKCHAIN_FILE = "blockchain_data.bin"
+BLOCKCHAIN_LEGACY_JSON = "blockchain_data.json"  # For migration
 
 # Mining difficulty: number of leading zeros required in hash
 # 2 = fast (demo), 4 = slow (production)
@@ -38,28 +40,46 @@ class Blockchain:
         print("[+] Genesis block created (mined)")
 
     def _load_from_file(self):
-        """Load blockchain from JSON file"""
+        """Load blockchain from binary file"""
         try:
-            with open(BLOCKCHAIN_FILE, 'r') as f:
-                data = json.load(f)
+            with open(BLOCKCHAIN_FILE, 'rb') as f:
+                compressed = f.read()
+                raw_json = zlib.decompress(compressed).decode('utf-8')
+                data = json.loads(raw_json)
                 self.chain = data.get('chain', [])
                 self.current_transactions = data.get('pending', [])
-        except (json.JSONDecodeError, IOError) as e:
+        except Exception as e:
+            # Try loading legacy JSON format (migration)
+            if os.path.exists(BLOCKCHAIN_LEGACY_JSON):
+                try:
+                    print(f"[*] Migrating from JSON to binary format...")
+                    with open(BLOCKCHAIN_LEGACY_JSON, 'r') as f:
+                        data = json.load(f)
+                        self.chain = data.get('chain', [])
+                        self.current_transactions = data.get('pending', [])
+                    self._save_to_file()  # Save as binary
+                    os.remove(BLOCKCHAIN_LEGACY_JSON)  # Remove old JSON
+                    print(f"[+] Migration complete! Old JSON removed.")
+                    return
+                except Exception:
+                    pass
             print(f"[-] Failed to load blockchain: {e}. Creating fresh chain.")
             self.chain = []
             self.current_transactions = []
             self._create_genesis()
 
     def _save_to_file(self):
-        """Save blockchain to local JSON file"""
+        """Save blockchain as compressed binary"""
         try:
             data = {
                 'chain': self.chain,
                 'pending': self.current_transactions,
                 'last_saved': time.time()
             }
-            with open(BLOCKCHAIN_FILE, 'w') as f:
-                json.dump(data, f, indent=2)
+            raw_json = json.dumps(data, sort_keys=True).encode('utf-8')
+            compressed = zlib.compress(raw_json, level=9)  # Max compression
+            with open(BLOCKCHAIN_FILE, 'wb') as f:
+                f.write(compressed)
         except IOError as e:
             print(f"[-] Failed to save blockchain: {e}")
 
