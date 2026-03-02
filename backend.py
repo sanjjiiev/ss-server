@@ -45,6 +45,8 @@ REPLICATION_FACTOR = 2  # Store each chunk on 2 nodes
 node_tasks = {}
 # Track pending confirmations: {chunk_name: set(node_ids)}
 relay_pending = {}
+# Round-robin counter for distributing chunks across nodes
+rr_counter = 0
 
 @app.post("/api/relay_upload")
 async def relay_upload(file: UploadFile = File(...), chunk_name: str = Form(...)):
@@ -56,13 +58,20 @@ async def relay_upload(file: UploadFile = File(...), chunk_name: str = Form(...)
             content = await file.read()
             f.write(content)
         
-        # 2. Assign to multiple nodes (replication)
+        # 2. Assign to nodes (round-robin + replication)
         nodes = get_live_nodes()
         if not nodes:
             return {"status": "error", "message": "No active nodes"}
         
+        global rr_counter
         num_replicas = min(REPLICATION_FACTOR, len(nodes))
-        target_nodes = random.sample(nodes, num_replicas)
+        
+        # Round-robin: start from different node for each chunk
+        target_nodes = []
+        for j in range(num_replicas):
+            idx = (rr_counter + j) % len(nodes)
+            target_nodes.append(nodes[idx])
+        rr_counter += 1
         
         # 3. Queue store task for each target node
         relay_pending[chunk_name] = set(target_nodes)
@@ -90,11 +99,11 @@ def poll_tasks(node_id: str):
 
 @app.get("/api/download_relay/{chunk_name}")
 def download_relay(chunk_name: str):
-    """Node downloads the chunk from our relay storage."""
+    """Download chunk from relay storage. Returns 404 if not ready."""
     file_path = os.path.join(RELAY_DIR, chunk_name)
     if os.path.exists(file_path):
         return FileResponse(file_path)
-    return {"error": "File not found"}
+    return JSONResponse({"error": "File not found"}, status_code=404)
 
 @app.post("/api/confirm_task")
 def confirm_task(node_id: str, chunk_name: str, status: str):

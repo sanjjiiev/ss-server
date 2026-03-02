@@ -159,9 +159,11 @@ with tab1:
                 fernet = Fernet(key)
                 encrypted = fernet.encrypt(file_bytes)
                 
-                # 2. Shard
+                # 2. Shard (always at least 2 chunks)
                 status.info("✂️ Sharding...")
-                chunks = [encrypted[i:i + CHUNK_SIZE] for i in range(0, len(encrypted), CHUNK_SIZE)]
+                # Ensure minimum 2 chunks for distribution
+                effective_chunk_size = min(CHUNK_SIZE, max(1, len(encrypted) // 2))
+                chunks = [encrypted[i:i + effective_chunk_size] for i in range(0, len(encrypted), effective_chunk_size)]
                 
                 # 3. Relay Upload
                 status.info(f"📡 Uploading {len(chunks)} chunks to Relay...")
