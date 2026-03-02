@@ -86,6 +86,40 @@ class Blockchain:
             print(f"[-] HF commit failed (local save still OK): {e}")
 
     # ─────────────────────────────────────────────
+    # MERKLE TREE
+    # ─────────────────────────────────────────────
+    @staticmethod
+    def _merkle_root(transactions):
+        """
+        Build a Merkle Root from a list of transactions.
+        Each transaction is hashed, then pairs are hashed together
+        recursively until a single root hash remains.
+        """
+        if not transactions:
+            return hashlib.sha256(b"empty").hexdigest()
+        
+        # Hash each transaction
+        hashes = [
+            hashlib.sha256(
+                json.dumps(tx, sort_keys=True).encode()
+            ).hexdigest()
+            for tx in transactions
+        ]
+        
+        # Build tree: pair and hash until one root
+        while len(hashes) > 1:
+            if len(hashes) % 2 != 0:
+                hashes.append(hashes[-1])  # Duplicate last if odd
+            hashes = [
+                hashlib.sha256(
+                    (hashes[i] + hashes[i + 1]).encode()
+                ).hexdigest()
+                for i in range(0, len(hashes), 2)
+            ]
+        
+        return hashes[0]
+
+    # ─────────────────────────────────────────────
     # PROOF OF WORK (Mining)
     # ─────────────────────────────────────────────
     def proof_of_work(self, last_proof):
@@ -113,6 +147,7 @@ class Blockchain:
         Verify the entire chain is valid:
         1. Each block's previous_hash matches the hash of the prior block
         2. Each block's proof of work is valid
+        3. Each block's transactions_root matches its transactions
         Returns (True, -1) if valid, (False, bad_block_index) if tampered
         """
         for i in range(1, len(self.chain)):
@@ -127,6 +162,12 @@ class Blockchain:
             if not self.valid_proof(prev_block['proof'], block['proof']):
                 return False, i
 
+            # Check 3: Merkle root of transactions
+            if 'transactions_root' in block:
+                expected_root = self._merkle_root(block['transactions'])
+                if block['transactions_root'] != expected_root:
+                    return False, i
+
         return True, -1
 
     # ─────────────────────────────────────────────
@@ -138,6 +179,7 @@ class Blockchain:
             'index': len(self.chain) + 1,
             'timestamp': time.time(),
             'transactions': self.current_transactions,
+            'transactions_root': self._merkle_root(self.current_transactions),
             'proof': proof,
             'previous_hash': previous_hash or self.hash(self.chain[-1]),
         }
