@@ -190,6 +190,31 @@ class Blockchain:
 
         return True, -1
 
+    def resolve_chain(self, incoming_chain):
+        """
+        Longest Valid Chain Wins (Consensus Rule).
+        If incoming chain is longer AND valid, adopt it.
+        Returns True if our chain was replaced.
+        """
+        if len(incoming_chain) <= len(self.chain):
+            return False  # Our chain is longer or equal
+
+        # Temporarily swap to validate
+        old_chain = self.chain
+        self.chain = incoming_chain
+        valid, bad_index = self.validate_chain()
+
+        if valid:
+            # Incoming chain is longer AND valid — adopt it
+            self._save_to_file()
+            print(f"[+] Chain replaced! {len(old_chain)} → {len(incoming_chain)} blocks")
+            return True
+        else:
+            # Invalid — reject and restore
+            self.chain = old_chain
+            print(f"[-] Incoming chain invalid at block {bad_index}. Rejected.")
+            return False
+
     # ─────────────────────────────────────────────
     # BLOCK & TRANSACTION OPERATIONS
     # ─────────────────────────────────────────────

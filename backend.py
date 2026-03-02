@@ -214,6 +214,33 @@ async def api_validate():
         "tampered_at": bad_index if not valid else None
     })
 
+@app.post("/api/sync_chain")
+async def api_sync_chain(request: Request):
+    """Node pushes its chain. Longest valid chain wins."""
+    try:
+        data = await request.json()
+        incoming_chain = data.get("chain", [])
+        
+        if not incoming_chain:
+            return JSONResponse({"status": "error", "message": "Empty chain"}, status_code=400)
+        
+        replaced = blockchain.resolve_chain(incoming_chain)
+        
+        if replaced:
+            blockchain.save_to_repo()
+            return JSONResponse({
+                "status": "adopted",
+                "new_length": len(blockchain.chain)
+            })
+        else:
+            return JSONResponse({
+                "status": "rejected",
+                "reason": "Our chain is longer or equal",
+                "our_length": len(blockchain.chain)
+            })
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
 if __name__ == "__main__":
     # Internal port for API (not exposed publically directly)
     uvicorn.run(app, host="0.0.0.0", port=8000)
