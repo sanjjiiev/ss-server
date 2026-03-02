@@ -247,19 +247,42 @@ with tab2:
                     
                     status.info(f"📡 Found {len(locations)} chunks. Fetching...")
                     
-                    # 2. Sort & Fetch
+                    # 2. Sort chunks
                     sorted_chunks = sorted(locations.keys(), key=lambda x: int(x.split('_')[-1]))
                     full_enc = b""
                     
                     progress = st.progress(0)
                     
+                    # 2a. Request ALL retrievals UPFRONT (so node gets all tasks at once)
+                    status.info(f"📡 Requesting {len(sorted_chunks)} chunks from nodes...")
+                    for chunk_name in sorted_chunks:
+                        node_info = locations[chunk_name]
+                        node_list = node_info if isinstance(node_info, list) else [node_info]
+                        for node_id in node_list:
+                            clean_id = node_id.split(":")[0] if ":" in node_id else node_id
+                            try:
+                                requests.post(f"{API_URL}/request_retrieval",
+                                    json={"chunk_name": chunk_name, "node_id": clean_id}, timeout=5)
+                            except:
+                                pass
+                    
+                    # 2b. Now poll for each chunk (node is already pushing them all)
                     for i, chunk_name in enumerate(sorted_chunks):
-                        node_str = locations[chunk_name]
-                        # Use Relay Download
-                        data = http_relay_download(node_str, chunk_name)
+                        status.info(f"📥 Downloading chunk {i+1}/{len(sorted_chunks)}...")
+                        data = None
+                        # Poll for up to 60s with retries
+                        for _ in range(60):
+                            try:
+                                r = requests.get(f"{API_URL}/download_relay/{chunk_name}", timeout=5)
+                                if r.status_code == 200:
+                                    data = r.content
+                                    break
+                            except:
+                                pass
+                            time.sleep(1)
                         
                         if not data:
-                             st.error(f"❌ Failed to fetch chunk {chunk_name} from {node_str}")
+                             st.error(f"❌ Failed to fetch chunk {chunk_name}")
                              full_enc = None
                              break
                         full_enc += data
